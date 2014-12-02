@@ -1,0 +1,69 @@
+#!/usr/bin/env python
+import re
+import docker.client
+import docker.utils
+from urlparse import urlparse
+from requests.exceptions import *
+try:
+    from docker.errors import APIError as DockerAPIError
+except ImportError:
+    from docker.client import APIError as DockerAPIError
+
+def kv_to_dict(prev, str):
+  print str
+  parts = str.split('=')
+  arr = re.sub('"', '', parts[1]).split(',')
+  if len(arr) == 1:
+    prev[parts[0]] = arr[0]
+  else:
+    prev[parts[0]] = arr
+  return prev
+class DockerInspector(object):
+  def __init__(self, module):
+    self.module = module
+    self.name = module.params['name']
+    self.tag = module.params['tag']
+    docker_url = urlparse(module.params.get('docker_url'))
+    self.client = docker.Client(base_url=docker_url.geturl()) #, version=docker_api_version)
+
+  def inspect(self):
+    return (self.client.inspect_image(self.name), None)
+
+def main(module_class=None):
+    if module_class is None:
+        module_class = AnsibleModule
+
+    module = module_class(
+        argument_spec=dict(
+            name=dict(required=True),
+            tag=dict(default='', required=False),
+            docker_url=dict(default='unix://var/run/docker.sock'),
+        ),
+        supports_check_mode=True
+    )
+
+    inspector = DockerInspector(module)
+
+    out = ''
+    err = ''
+    result = {}
+
+    if module.check_mode:
+        module.exit_json(changed=False)
+
+    (out, err) = inspector.inspect()
+
+    env = out['Config']['Env']
+    env_map = reduce(kv_to_dict, env, {})
+    if out:
+        result['stdout'] = env_map['DEPENDENCIES']
+    if err:
+        result['stderr'] = err
+
+    module.exit_json(**result)
+
+
+from ansible.module_utils.basic import *
+
+if __name__ == '__main__':
+    main()
